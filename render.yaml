@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: video-thumbnail-bot
+    env: python
+
+    buildCommand: pip install -r requirements.txt
+
+    startCommand: python bot.py
+
+    envVars:
+      - key: API_ID
+        sync: false
+
+      - key: API_HASH
+        sync: false
+
+      - key: BOT_TOKEN
+        sync: false
+
+      - key: MONGO_URI
+        sync: false
+
+      - key: ADMIN_ID
+        sync: false
