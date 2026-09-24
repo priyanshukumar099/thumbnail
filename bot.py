@@ -1,9 +1,13 @@
 import os
+import time
 import asyncio
 import tempfile
+import threading
+from datetime import datetime
 
 from flask import Flask
 from pymongo import MongoClient
+from bson import ObjectId
 from PIL import Image
 
 from pyrogram import Client, filters
@@ -31,7 +35,7 @@ ADMIN_ID = int(os.environ["ADMIN_ID"])
 
 
 # =========================================================
-# FLASK SERVER
+# FLASK - RENDER WEB SERVICE
 # =========================================================
 
 app = Flask(__name__)
@@ -39,7 +43,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Thumbnail Bot is Running!"
+    return "Advanced Thumbnail Bot is Running! 🚀"
 
 
 def run_flask():
@@ -64,7 +68,7 @@ mongo = MongoClient(
 
 db = mongo[MONGO_DB]
 
-settings = db["settings"]
+thumbs = db["thumbnails"]
 
 
 # =========================================================
@@ -72,11 +76,18 @@ settings = db["settings"]
 # =========================================================
 
 bot = Client(
-    "thumbnail_bot",
+    "advanced_thumbnail_bot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
+
+
+# =========================================================
+# USER STATE
+# =========================================================
+
+user_state = {}
 
 
 # =========================================================
@@ -89,16 +100,28 @@ def is_admin(user_id):
 
 
 # =========================================================
-# KEYBOARD
+# MAIN MENU
 # =========================================================
 
-def main_keyboard():
+def main_menu():
 
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton(
-                "🖼️ Set Thumbnail",
-                callback_data="set_thumbnail"
+                "🖼️ Thumbnail Manager",
+                callback_data="manager"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📚 My Thumbnails",
+                callback_data="list"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "⭐ Current Thumbnail",
+                callback_data="current"
             )
         ],
         [
@@ -109,8 +132,54 @@ def main_keyboard():
         ],
         [
             InlineKeyboardButton(
-                "🗑️ Clear Thumbnail",
-                callback_data="clear_thumbnail"
+                "🗑️ Remove Current",
+                callback_data="remove_current"
+            )
+        ]
+    ])
+
+
+# =========================================================
+# THUMBNAIL MANAGER
+# =========================================================
+
+def manager_menu():
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(
+                "➕ Add Thumbnail",
+                callback_data="add"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "📚 Saved Thumbnails",
+                callback_data="list"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔄 Change Thumbnail",
+                callback_data="list"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "⭐ Set Default",
+                callback_data="list"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🗑️ Remove Current",
+                callback_data="remove_current"
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="home"
             )
         ]
     ])
@@ -128,17 +197,62 @@ async def start(client, message):
     if not is_admin(
         message.from_user.id
     ):
+        await message.reply_text(
+            "❌ Admin only."
+        )
         return
 
     await message.reply_text(
-        "🤖 **Video Thumbnail Bot**\n\n"
-        "यह Bot केवल Video का Thumbnail "
-        "change करेगा.\n\n"
-        "🖼️ Thumbnail Set करें\n"
-        "📹 फिर Video भेजें\n\n"
-        "Video का original caption "
-        "जैसा है वैसा ही रहेगा.",
-        reply_markup=main_keyboard()
+        "🎬 **Advanced Video Thumbnail Bot**\n\n"
+        "Welcome Admin! 👋🏻\n\n"
+        "🖼️ Set/manage your thumbnails\n"
+        "📚 Save multiple thumbnails\n"
+        "⭐ Select a default thumbnail\n"
+        "📹 Send a video to apply it\n\n"
+        "**Video caption will remain unchanged.**",
+        reply_markup=main_menu()
+    )
+
+
+# =========================================================
+# HELP
+# =========================================================
+
+@bot.on_message(
+    filters.command("help")
+)
+async def help_command(client, message):
+
+    if not is_admin(
+        message.from_user.id
+    ):
+        return
+
+    await message.reply_text(
+        "📖 **Bot Help**\n\n"
+
+        "➕ Add Thumbnail\n"
+        "Save a new thumbnail.\n\n"
+
+        "📚 My Thumbnails\n"
+        "View all saved thumbnails.\n\n"
+
+        "⭐ Current Thumbnail\n"
+        "See selected thumbnail.\n\n"
+
+        "🗑️ Remove Current\n"
+        "Remove the active thumbnail.\n\n"
+
+        "📹 Send Video\n"
+        "Bot will upload the same video "
+        "with the selected thumbnail.\n\n"
+
+        "📊 Upload progress includes:\n"
+        "• Percentage\n"
+        "• Speed\n"
+        "• Size\n"
+        "• ETA\n"
+        "• Elapsed time"
     )
 
 
@@ -157,109 +271,441 @@ async def callback_handler(
     ):
 
         await query.answer(
-            "❌ Admin Only!",
+            "❌ Admin only!",
             show_alert=True
         )
 
         return
 
 
-    # -----------------------------------------
-    # SET THUMBNAIL
-    # -----------------------------------------
+    data = query.data
 
-    if query.data == "set_thumbnail":
 
-        await query.message.reply_text(
-            "🖼️ अब वह **Photo भेजें** जिसे "
-            "आप Video का Thumbnail बनाना चाहते हैं."
-        )
+    # =====================================================
+    # HOME
+    # =====================================================
 
-        # Admin के लिए next photo को thumbnail
-        # बनाने का temporary flag
-        settings.update_one(
-            {"_id": "main"},
-            {
-                "$set": {
-                    "waiting_for_thumbnail": True
-                }
-            },
-            upsert=True
+    if data == "home":
+
+        await query.message.edit_text(
+            "🎬 **Advanced Thumbnail Bot**\n\n"
+            "Choose an option:",
+            reply_markup=main_menu()
         )
 
         await query.answer()
 
 
-    # -----------------------------------------
-    # PREVIEW
-    # -----------------------------------------
+    # =====================================================
+    # MANAGER
+    # =====================================================
 
-    elif query.data == "preview":
+    elif data == "manager":
 
-        data = settings.find_one(
-            {"_id": "main"}
+        await query.message.edit_text(
+            "🖼️ **Thumbnail Manager**\n\n"
+            "Manage your saved thumbnails:",
+            reply_markup=manager_menu()
         )
 
-        thumbnail = None
+        await query.answer()
 
-        if data:
-            thumbnail = data.get(
-                "thumbnail"
-            )
 
-        if not thumbnail:
+    # =====================================================
+    # ADD THUMBNAIL
+    # =====================================================
+
+    elif data == "add":
+
+        user_state[
+            query.from_user.id
+        ] = {
+            "state": "waiting_photo"
+        }
+
+        await query.message.reply_text(
+            "➕ **Add Thumbnail**\n\n"
+            "Please send the thumbnail image.\n\n"
+            "Tip: JPG/JPEG works best."
+        )
+
+        await query.answer()
+
+
+    # =====================================================
+    # LIST
+    # =====================================================
+
+    elif data == "list":
+
+        await show_thumbnail_list(
+            query.message
+        )
+
+        await query.answer()
+
+
+    # =====================================================
+    # CURRENT
+    # =====================================================
+
+    elif data == "current":
+
+        current = thumbs.find_one(
+            {
+                "is_current": True
+            }
+        )
+
+        if not current:
 
             await query.message.reply_text(
-                "❌ अभी कोई Thumbnail Set नहीं है."
+                "⭐ No thumbnail is currently selected."
             )
 
-            await query.answer()
+        else:
+
+            await client.send_photo(
+                query.message.chat.id,
+                current["file_id"],
+                caption=(
+                    "⭐ **Current Thumbnail**\n\n"
+                    f"Name: `{current['name']}`"
+                )
+            )
+
+        await query.answer()
+
+
+    # =====================================================
+    # PREVIEW
+    # =====================================================
+
+    elif data == "preview":
+
+        current = thumbs.find_one(
+            {
+                "is_current": True
+            }
+        )
+
+        if not current:
+
+            await query.message.reply_text(
+                "❌ No current thumbnail selected."
+            )
+
+        else:
+
+            await client.send_photo(
+                query.message.chat.id,
+                current["file_id"],
+                caption=(
+                    "👀 **Thumbnail Preview**\n\n"
+                    f"Name: `{current['name']}`\n"
+                    "Status: ⭐ Active"
+                )
+            )
+
+        await query.answer()
+
+
+    # =====================================================
+    # REMOVE CURRENT
+    # =====================================================
+
+    elif data == "remove_current":
+
+        current = thumbs.find_one(
+            {
+                "is_current": True
+            }
+        )
+
+        if not current:
+
+            await query.message.reply_text(
+                "❌ No current thumbnail."
+            )
+
+        else:
+
+            thumbs.update_one(
+                {
+                    "_id": current["_id"]
+                },
+                {
+                    "$set": {
+                        "is_current": False
+                    }
+                }
+            )
+
+            await query.message.reply_text(
+                "🗑️ **Current thumbnail removed.**"
+            )
+
+        await query.answer()
+
+
+    # =====================================================
+    # SELECT THUMBNAIL
+    # =====================================================
+
+    elif data.startswith("select:"):
+
+        thumb_id = data.split(
+            ":",
+            1
+        )[1]
+
+        try:
+
+            selected = thumbs.find_one(
+                {
+                    "_id": ObjectId(
+                        thumb_id
+                    )
+                }
+            )
+
+        except Exception:
+
+            selected = None
+
+
+        if not selected:
+
+            await query.answer(
+                "❌ Thumbnail not found.",
+                show_alert=True
+            )
 
             return
 
-        await client.send_photo(
-            chat_id=query.message.chat.id,
-            photo=thumbnail,
-            caption="🖼️ **Current Thumbnail**"
+
+        # Remove current status
+        thumbs.update_many(
+            {},
+            {
+                "$set": {
+                    "is_current": False
+                }
+            }
+        )
+
+
+        # Set selected
+        thumbs.update_one(
+            {
+                "_id": selected["_id"]
+            },
+            {
+                "$set": {
+                    "is_current": True
+                }
+            }
+        )
+
+
+        await query.message.reply_text(
+            "⭐ **Thumbnail Changed Successfully!**\n\n"
+            f"Selected: `{selected['name']}`"
         )
 
         await query.answer()
 
 
-    # -----------------------------------------
-    # CLEAR
-    # -----------------------------------------
+    # =====================================================
+    # DELETE THUMBNAIL
+    # =====================================================
 
-    elif query.data == "clear_thumbnail":
+    elif data.startswith("delete:"):
 
-        settings.update_one(
-            {"_id": "main"},
-            {
-                "$unset": {
-                    "thumbnail": ""
-                },
-                "$set": {
-                    "waiting_for_thumbnail": False
+        thumb_id = data.split(
+            ":",
+            1
+        )[1]
+
+        try:
+
+            result = thumbs.delete_one(
+                {
+                    "_id": ObjectId(
+                        thumb_id
+                    )
                 }
-            },
-            upsert=True
-        )
+            )
 
-        await query.message.reply_text(
-            "🗑️ **Thumbnail Clear हो गया.**"
-        )
+            if result.deleted_count:
+
+                await query.message.reply_text(
+                    "🗑️ **Thumbnail deleted successfully.**"
+                )
+
+            else:
+
+                await query.message.reply_text(
+                    "❌ Thumbnail not found."
+                )
+
+        except Exception:
+
+            await query.message.reply_text(
+                "❌ Could not delete thumbnail."
+            )
+
+        await query.answer()
+
+
+    # =====================================================
+    # DELETE CONFIRM
+    # =====================================================
+
+    elif data.startswith("confirm_delete:"):
+
+        thumb_id = data.split(
+            ":",
+            1
+        )[1]
+
+        try:
+
+            result = thumbs.delete_one(
+                {
+                    "_id": ObjectId(
+                        thumb_id
+                    )
+                }
+            )
+
+            if result.deleted_count:
+
+                await query.message.reply_text(
+                    "✅ Thumbnail permanently deleted."
+                )
+
+            else:
+
+                await query.message.reply_text(
+                    "❌ Thumbnail not found."
+                )
+
+        except Exception:
+
+            await query.message.reply_text(
+                "❌ Delete failed."
+            )
 
         await query.answer()
 
 
 # =========================================================
-# PHOTO → SET THUMBNAIL
+# SHOW THUMBNAIL LIST
+# =========================================================
+
+async def show_thumbnail_list(
+    message
+):
+
+    items = list(
+        thumbs.find().sort(
+            "_id",
+            -1
+        ).limit(50)
+    )
+
+
+    if not items:
+
+        await message.reply_text(
+            "📚 **My Thumbnails**\n\n"
+            "No thumbnails saved yet.\n\n"
+            "Use ➕ Add Thumbnail to create one.",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "➕ Add Thumbnail",
+                        callback_data="add"
+                    )
+                ]
+            ])
+        )
+
+        return
+
+
+    buttons = []
+
+
+    for item in items:
+
+        name = item.get(
+            "name",
+            "Unnamed"
+        )
+
+        active = " ⭐" if item.get(
+            "is_current",
+            False
+        ) else ""
+
+
+        buttons.append([
+            InlineKeyboardButton(
+                f"{name}{active}",
+                callback_data=(
+                    "select:" +
+                    str(item["_id"])
+                )
+            )
+        ])
+
+
+        buttons.append([
+            InlineKeyboardButton(
+                f"🗑️ Delete {name}",
+                callback_data=(
+                    "confirm_delete:" +
+                    str(item["_id"])
+                )
+            )
+        ])
+
+
+    buttons.append([
+        InlineKeyboardButton(
+            "➕ Add New",
+            callback_data="add"
+        )
+    ])
+
+    buttons.append([
+        InlineKeyboardButton(
+            "🔙 Back",
+            callback_data="manager"
+        )
+    ])
+
+
+    await message.reply_text(
+        "📚 **Saved Thumbnails**\n\n"
+        "Tap a thumbnail to make it active ⭐\n"
+        "Then send your video.",
+        reply_markup=InlineKeyboardMarkup(
+            buttons
+        )
+    )
+
+
+# =========================================================
+# PHOTO HANDLER
 # =========================================================
 
 @bot.on_message(
     filters.photo
 )
-async def thumbnail_handler(
+async def photo_handler(
     client,
     message
 ):
@@ -269,50 +715,54 @@ async def thumbnail_handler(
     ):
         return
 
-    data = settings.find_one(
-        {"_id": "main"}
+
+    state = user_state.get(
+        message.from_user.id
     )
 
-    waiting = False
 
-    if data:
-        waiting = data.get(
-            "waiting_for_thumbnail",
-            False
-        )
-
-    if not waiting:
+    if not state:
 
         return
 
-    # Telegram Photo File ID
-    file_id = message.photo.file_id
 
-    settings.update_one(
-        {"_id": "main"},
-        {
-            "$set": {
-                "thumbnail": file_id,
-                "waiting_for_thumbnail": False
-            }
-        },
-        upsert=True
-    )
+    if state.get(
+        "state"
+    ) != "waiting_photo":
+
+        return
+
+
+    # Save temporary state
+    user_state[
+        message.from_user.id
+    ] = {
+        "state": "waiting_name",
+        "file_id": message.photo.file_id
+    }
+
 
     await message.reply_text(
-        "✅ **Thumbnail Successfully Saved!**\n\n"
-        "अब अपना Video भेजें 📹"
+        "✅ **Thumbnail image received!**\n\n"
+        "Now send a name for this thumbnail.\n\n"
+        "Example:\n"
+        "`Naruto`\n"
+        "`Boruto`\n"
+        "`Black Clover`"
     )
 
 
 # =========================================================
-# VIDEO HANDLER
+# TEXT HANDLER
 # =========================================================
 
 @bot.on_message(
-    filters.video
+    filters.text
+    & ~filters.command(
+        ["start", "help"]
+    )
 )
-async def video_handler(
+async def text_handler(
     client,
     message
 ):
@@ -322,182 +772,256 @@ async def video_handler(
     ):
         return
 
-    data = settings.find_one(
-        {"_id": "main"}
+
+    state = user_state.get(
+        message.from_user.id
     )
 
-    if not data:
 
-        await message.reply_text(
-            "❌ पहले Thumbnail Set करें."
-        )
-
+    if not state:
         return
 
-    thumbnail_id = data.get(
-        "thumbnail"
-    )
 
-    if not thumbnail_id:
-
-        await message.reply_text(
-            "❌ पहले Thumbnail Set करें."
-        )
+    if state.get(
+        "state"
+    ) != "waiting_name":
 
         return
 
 
-    status = await message.reply_text(
-        "⏳ **Video Processing...**\n\n"
-        "कृपया wait करें."
+    name = message.text.strip()
+
+
+    if not name:
+
+        await message.reply_text(
+            "❌ Please send a valid name."
+        )
+
+        return
+
+
+    file_id = state.get(
+        "file_id"
     )
 
 
-    # Temporary files
-    video_path = None
-    thumb_path = None
-
-
-    try:
-
-        # =================================================
-        # DOWNLOAD VIDEO
-        # =================================================
-
-        video_path = await client.download_media(
-            message,
-            file_name=tempfile.mktemp(
-                suffix=".mp4"
-            )
-        )
-
-
-        # =================================================
-        # DOWNLOAD THUMBNAIL
-        # =================================================
-
-        original_thumb = await client.download_media(
-            thumbnail_id,
-            file_name=tempfile.mktemp(
-                suffix=".jpg"
-            )
-        )
-
-
-        # =================================================
-        # CONVERT / RESIZE THUMBNAIL
-        # =================================================
-
-        thumb_path = tempfile.mktemp(
-            suffix=".jpg"
-        )
-
-        with Image.open(
-            original_thumb
-        ) as img:
-
-            img = img.convert("RGB")
-
-            # Telegram thumbnail friendly size
-            img.thumbnail(
-                (320, 320)
-            )
-
-            img.save(
-                thumb_path,
-                "JPEG",
-                quality=85,
-                optimize=True
-            )
-
-
-        # =================================================
-        # ORIGINAL CAPTION
-        # =================================================
-
-        original_caption = (
-            message.caption
-            if message.caption
-            else None
-        )
-
-
-        # =================================================
-        # SEND VIDEO WITH THUMBNAIL
-        # =================================================
-
-        await client.send_video(
-            chat_id=message.chat.id,
-            video=video_path,
-
-            # Original caption remains unchanged
-            caption=original_caption,
-
-            # Custom thumbnail
-            thumb=thumb_path,
-
-            # Keep video information
-            duration=message.video.duration,
-            width=message.video.width,
-            height=message.video.height,
-
-            supports_streaming=True
-        )
-
-
-        await status.delete()
-
-
-    except Exception as e:
-
-        await status.edit_text(
-            "❌ **Thumbnail लगाने में Error आया.**\n\n"
-            f"`{str(e)}`"
-        )
-
-
-    finally:
-
-        # =================================================
-        # CLEAN TEMP FILES
-        # =================================================
-
-        for path in [
-            video_path,
-            thumb_path,
-            original_thumb if "original_thumb" in locals() else None
-        ]:
-
-            if path:
-
-                try:
-
-                    if os.path.exists(path):
-                        os.remove(path)
-
-                except Exception:
-                    pass
-
-
-# =========================================================
-# RUN
-# =========================================================
-
-if __name__ == "__main__":
-
-    # Start Flask
-    flask_thread = asyncio.get_event_loop()
-
-    import threading
-
-    threading.Thread(
-        target=run_flask,
-        daemon=True
-    ).start()
-
-
-    print(
-        "🤖 Video Thumbnail Bot Started!"
+    # Remove previous current status
+    thumbs.update_many(
+        {},
+        {
+            "$set": {
+                "is_current": False
+            }
+        }
     )
 
-    bot.run()
+
+    # Save new thumbnail
+    thumbs.insert_one({
+        "name": name,
+        "file_id": file_id,
+        "is_current": True,
+        "created_at": datetime.utcnow()
+    })
+
+
+    user_state.pop(
+        message.from_user.id,
+        None
+    )
+
+
+    await message.reply_text(
+        "✅ **Thumbnail Saved Successfully!**\n\n"
+        f"🖼️ Name: `{name}`\n"
+        "⭐ Status: Active\n\n"
+        "Now send a video 📹",
+        reply_markup=main_menu()
+    )
+
+
+# =========================================================
+# PROGRESS FORMAT
+# =========================================================
+
+def format_bytes(size):
+
+    if size is None:
+        return "0 B"
+
+    size = float(size)
+
+    for unit in [
+        "B",
+        "KB",
+        "MB",
+        "GB"
+    ]:
+
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+
+        size /= 1024
+
+    return f"{size:.1f} TB"
+
+
+def format_time(seconds):
+
+    if seconds is None:
+        return "00:00"
+
+    seconds = max(
+        0,
+        int(seconds)
+    )
+
+    hours = seconds // 3600
+
+    minutes = (
+        seconds % 3600
+    ) // 60
+
+    secs = seconds % 60
+
+
+    if hours:
+
+        return (
+            f"{hours:02d}:"
+            f"{minutes:02d}:"
+            f"{secs:02d}"
+        )
+
+    return (
+        f"{minutes:02d}:"
+        f"{secs:02d}"
+    )
+
+
+def progress_bar(
+    percentage,
+    length=16
+):
+
+    filled = int(
+        percentage / 100 * length
+    )
+
+    return (
+        "█" * filled +
+        "░" * (length - filled)
+    )
+
+
+# =========================================================
+# PROGRESS MESSAGE
+# =========================================================
+
+class Progress:
+
+    def __init__(
+        self,
+        message,
+        action
+    ):
+
+        self.message = message
+        self.action = action
+
+        self.last_update = 0
+        self.last_percent = -1
+        self.start_time = time.monotonic()
+
+
+    async def update(
+        self,
+        current,
+        total
+    ):
+
+        if not total:
+            return
+
+
+        now = time.monotonic()
+
+        percentage = (
+            current / total
+        ) * 100
+
+
+        # Speed
+        elapsed = (
+            now - self.start_time
+        )
+
+        if elapsed <= 0:
+            elapsed = 0.001
+
+
+        speed = (
+            current / elapsed
+        )
+
+
+        remaining = max(
+            0,
+            total - current
+        )
+
+
+        if speed > 0:
+
+            eta = (
+                remaining / speed
+            )
+
+        else:
+
+            eta = 0
+
+
+        # Don't spam Telegram API
+        if (
+            now - self.last_update < 2
+            and int(percentage) != 100
+        ):
+            return
+
+
+        self.last_update = now
+        self.last_percent = int(
+            percentage
+        )
+
+
+        text = (
+            f"{self.action}\n\n"
+
+            f"{progress_bar(percentage)} "
+            f"**{percentage:.1f}%**\n\n"
+
+            f"📦 **Size:** "
+            f"{format_bytes(current)} / "
+            f"{format_bytes(total)}\n"
+
+            f"⚡ **Speed:** "
+            f"{format_bytes(speed)}/s\n"
+
+            f"⏱️ **ETA:** "
+            f"{format_time(eta)}\n"
+
+            f"🕐 **Elapsed:** "
+            f"{format_time(elapsed)}"
+        )
+
+
+        try:
+
+            await self.message.edit_text(
+                text
+            )
+
+        except E
