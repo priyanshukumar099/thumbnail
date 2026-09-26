@@ -968,6 +968,43 @@ async def show_thumbnail_list(
 
 
 # =========================================================
+# /setthumb COMMAND
+# =========================================================
+
+@bot.on_message(filters.command("setthumb"))
+async def setthumb_command(client, message):
+
+    if not message.from_user:
+        return
+
+    if not is_admin(message.from_user.id):
+        await message.reply_text("❌ Admin only.")
+        return
+
+    user_state[message.from_user.id] = {
+        "state": "waiting_photo"
+    }
+
+    await message.reply_text(
+        "➕ **Set Thumbnail**\n\n"
+        "Please send the thumbnail image 🖼️\n\n"
+        "After sending the image, I will ask you for a name.\n\n"
+        "Example:\n"
+        "Send Image → `Naruto`"
+    )
+@bot.on_message(filters.command("showthumb"))
+async def showthumb_command(client, message):
+
+    if not message.from_user:
+        return
+
+    if not is_admin(message.from_user.id):
+        await message.reply_text("❌ Admin only.")
+        return
+
+    await show_thumbnail_list(message)
+
+# =========================================================
 # PHOTO HANDLER
 # =========================================================
 
